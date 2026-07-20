@@ -1,4 +1,3 @@
-
 #include <windows.h>
 #include <tlhelp32.h>
 #include <iostream>
@@ -6,7 +5,7 @@
 #include <string>
 
 DWORD GetProcessId(const wchar_t* procName) {
-    PROCESSENTRY32W pe{ sizeof(pe) };
+    PROCESSENTRY32W pe = { sizeof(pe) };
     HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
     if (snap == INVALID_HANDLE_VALUE) return 0;
     if (Process32FirstW(snap, &pe)) {
@@ -22,7 +21,7 @@ DWORD GetProcessId(const wchar_t* procName) {
 }
 
 uintptr_t GetModuleBase(DWORD pid, const wchar_t* modName) {
-    MODULEENTRY32W me{ sizeof(me) };
+    MODULEENTRY32W me = { sizeof(me) };
     HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPMODULE | TH32CS_SNAPMODULE32, pid);
     if (snap == INVALID_HANDLE_VALUE) return 0;
     if (Module32FirstW(snap, &me)) {
@@ -39,12 +38,12 @@ uintptr_t GetModuleBase(DWORD pid, const wchar_t* modName) {
 
 template<typename T>
 T Read(HANDLE hProc, uintptr_t addr) {
-    T val{};
+    T val = {};
     ReadProcessMemory(hProc, reinterpret_cast<LPCVOID>(addr), &val, sizeof(T), nullptr);
     return val;
 }
 
-// ====================== Decryption (از SDK) ======================
+// ====================== Decryption ======================
 namespace decryption {
     inline uintptr_t base_networkable_0(uintptr_t hv) {
         uintptr_t rax = hv;
@@ -77,7 +76,7 @@ namespace decryption {
 }
 
 int main() {
-    std::cout << "=== Rust Comprehensive Tester (Full) ===\n\n";
+    std::cout << "=== Rust Final Comprehensive Tester ===\n\n";
 
     DWORD pid = GetProcessId(L"RustClient.exe");
     if (!pid) {
@@ -96,19 +95,19 @@ int main() {
     uintptr_t ga = GetModuleBase(pid, L"GameAssembly.dll");
     std::cout << "[+] GameAssembly: 0x" << std::hex << ga << "\n\n";
 
-    // تست 1: BaseNetworkable (SDK)
-    std::cout << "--- Test 1: BaseNetworkable (SDK) ---\n";
+    // Test 1: BaseNetworkable SDK
+    std::cout << "--- Test 1: BaseNetworkable SDK ---\n";
     uintptr_t bn = ga + 0xFB99108;
     std::cout << "BaseNetworkable: 0x" << bn << "\n";
 
-    uintptr_t static_fields = Read<uintptr_t>(hProc, bn + 0xB8);
-    std::cout << "Static Fields: 0x" << static_fields << "\n";
+    uintptr_t sf = Read<uintptr_t>(hProc, bn + 0xB8);
+    std::cout << "Static Fields: 0x" << sf << "\n";
 
-    uintptr_t wrapper = Read<uintptr_t>(hProc, static_fields + 0x8);
-    std::cout << "Wrapper: 0x" << wrapper << "\n";
+    uintptr_t wrapper = Read<uintptr_t>(hProc, sf + 0x8);
+    std::cout << "Wrapper (+0x8): 0x" << wrapper << "\n";
 
     uintptr_t hv1 = Read<uintptr_t>(hProc, wrapper + 0x18);
-    std::cout << "HV1 raw: 0x" << hv1 << "\n";
+    std::cout << "HV1: 0x" << hv1 << "\n";
 
     uintptr_t dec1 = decryption::base_networkable_0(hv1);
     std::cout << "Dec1: 0x" << dec1 << "\n";
@@ -116,25 +115,22 @@ int main() {
     uintptr_t parent = Read<uintptr_t>(hProc, dec1 + 0x10);
     std::cout << "Parent: 0x" << parent << "\n";
 
-    if (parent == 0) {
-        std::cout << "[!] Parent صفر شد - decryption مشکل داره\n";
-    } else {
+    if (parent) {
         uintptr_t hv2 = Read<uintptr_t>(hProc, parent + 0x18);
-        uintptr_t entity_dict = decryption::base_networkable_1(hv2);
-        std::cout << "Entity Dict: 0x" << entity_dict << "\n";
-
-        uintptr_t buffer = Read<uintptr_t>(hProc, entity_dict + 0x10);
-        int count = Read<int>(hProc, entity_dict + 0x18);
-
-        std::cout << "Buffer List: 0x" << buffer << "\n";
-        std::cout << "Entity Count: " << std::dec << count << "\n";
+        uintptr_t dict = decryption::base_networkable_1(hv2);
+        uintptr_t buffer = Read<uintptr_t>(hProc, dict + 0x10);
+        int count = Read<int>(hProc, dict + 0x18);
+        std::cout << "Buffer: 0x" << buffer << "\n";
+        std::cout << "Count: " << std::dec << count << "\n";
+    } else {
+        std::cout << "[!] Parent صفر شد\n";
     }
 
-    // تست 2: Direct RVA (از دامپ اولیه)
-    std::cout << "\n--- Test 2: Direct Ent List ---\n";
+    // Test 2: Direct RVA
+    std::cout << "\n--- Test 2: Direct Entity List ---\n";
     uintptr_t direct = ga + 0x3c830a0;
     int direct_count = Read<int>(hProc, direct + 0x18);
-    std::cout << "Direct Entity Count: " << direct_count << "\n";
+    std::cout << "Direct Count: " << direct_count << "\n";
 
     CloseHandle(hProc);
     system("pause");
