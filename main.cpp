@@ -43,7 +43,7 @@ T Read(HANDLE hProc, uintptr_t addr) {
     return val;
 }
 
-// ====================== Decryption ======================
+// ====================== Decryption SDK ======================
 namespace decryption {
     inline uintptr_t base_networkable_0(uintptr_t hv) {
         uintptr_t rax = hv;
@@ -76,21 +76,13 @@ namespace decryption {
 }
 
 int main() {
-    std::cout << "=== Rust SDK Tester v3 ===\n\n";
+    std::cout << "=== Rust SDK Tester v4 (Debug) ===\n\n";
 
     DWORD pid = GetProcessId(L"RustClient.exe");
-    if (!pid) {
-        std::cout << "[-] RustClient.exe پیدا نشد!\n";
-        system("pause");
-        return 1;
-    }
+    if (!pid) { std::cout << "[-] Rust پیدا نشد\n"; system("pause"); return 1; }
 
     HANDLE hProc = OpenProcess(PROCESS_VM_READ, FALSE, pid);
-    if (!hProc) {
-        std::cout << "[-] OpenProcess شکست خورد!\n";
-        system("pause");
-        return 1;
-    }
+    if (!hProc) { std::cout << "[-] OpenProcess شکست\n"; system("pause"); return 1; }
 
     uintptr_t ga = GetModuleBase(pid, L"GameAssembly.dll");
     std::cout << "[+] GameAssembly: 0x" << std::hex << ga << "\n";
@@ -105,21 +97,26 @@ int main() {
     std::cout << "[+] Wrapper: 0x" << wrapper << "\n";
 
     uintptr_t hv1 = Read<uintptr_t>(hProc, wrapper + 0x18);
+    std::cout << "[+] HV1 raw: 0x" << hv1 << "\n";
+
     uintptr_t dec1 = decryption::base_networkable_0(hv1);
     std::cout << "[+] Dec1: 0x" << dec1 << "\n";
 
     uintptr_t parent = Read<uintptr_t>(hProc, dec1 + 0x10);
     std::cout << "[+] Parent: 0x" << parent << "\n";
 
-    uintptr_t hv2 = Read<uintptr_t>(hProc, parent + 0x18);
-    uintptr_t entity_dict = decryption::base_networkable_1(hv2);
-    std::cout << "[+] Entity Dict: 0x" << entity_dict << "\n";
+    if (parent == 0) {
+        std::cout << "[!] Parent صفر شد - decryption اول اشتباهه\n";
+    } else {
+        uintptr_t hv2 = Read<uintptr_t>(hProc, parent + 0x18);
+        uintptr_t entity_dict = decryption::base_networkable_1(hv2);
+        std::cout << "[+] Entity Dict: 0x" << entity_dict << "\n";
 
-    uintptr_t buffer_list = Read<uintptr_t>(hProc, entity_dict + 0x10);
-    int count = Read<int>(hProc, entity_dict + 0x18);
-
-    std::cout << "[+] Buffer List: 0x" << buffer_list << "\n";
-    std::cout << "[+] Entity Count: " << std::dec << count << "\n\n";
+        uintptr_t buffer = Read<uintptr_t>(hProc, entity_dict + 0x10);
+        int count = Read<int>(hProc, entity_dict + 0x18);
+        std::cout << "[+] Buffer: 0x" << buffer << "\n";
+        std::cout << "[+] Count : " << std::dec << count << "\n";
+    }
 
     CloseHandle(hProc);
     system("pause");
