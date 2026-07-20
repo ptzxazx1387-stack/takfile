@@ -54,8 +54,15 @@ uintptr_t client_entities(uintptr_t a1, HANDLE hProc) {
     uint64_t rax = Read<uint64_t>(hProc, a1 + 0x18);
     uint32_t* rdx = reinterpret_cast<uint32_t*>(&rax);
     for (uint32_t i = 0; i < 2; ++i) {
-        uint32_t val = *rdx;
-        *rdx++ = val;  // TODO: decryption واقعی
+        uint32_t eax = *rdx;
+        uint32_t ecx = eax;
+        // TODO: decryption واقعی اینجا (از IDA)
+        // مثال (ممکنه اشتباه باشه - باید از IDA بگیری):
+        eax = (eax ^ 0x1E7771E);
+        ecx = ecx >> 0x1A;
+        eax = (eax << 0x6) | ecx;
+        eax = eax - 0x1118D90C;
+        *rdx++ = eax;
     }
     return decryptIl2cppHandle(rax);
 }
@@ -65,8 +72,10 @@ uintptr_t entity_list(uintptr_t a1, HANDLE hProc) {
     uint64_t rax = Read<uint64_t>(hProc, a1 + 0x18);
     uint32_t* rdx = reinterpret_cast<uint32_t*>(&rax);
     for (uint32_t i = 0; i < 2; ++i) {
-        uint32_t val = *rdx;
-        *rdx++ = val;
+        uint32_t eax = *rdx;
+        uint32_t ecx = eax;
+        // TODO: decryption واقعی
+        *rdx++ = eax;
     }
     return decryptIl2cppHandle(rax);
 }
