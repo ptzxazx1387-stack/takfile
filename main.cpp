@@ -43,7 +43,6 @@ T Read(HANDLE hProc, uintptr_t addr) {
     return val;
 }
 
-// ====================== Decryption ======================
 namespace decryption {
     inline uintptr_t base_networkable_0(uintptr_t hv) {
         uintptr_t rax = hv;
@@ -76,7 +75,7 @@ namespace decryption {
 }
 
 int main() {
-    std::cout << "=== Rust Final Comprehensive Tester ===\n\n";
+    std::cout << "=== Rust Final Tester (Wrapper Test) ===\n\n";
 
     DWORD pid = GetProcessId(L"RustClient.exe");
     if (!pid) {
@@ -95,42 +94,29 @@ int main() {
     uintptr_t ga = GetModuleBase(pid, L"GameAssembly.dll");
     std::cout << "[+] GameAssembly: 0x" << std::hex << ga << "\n\n";
 
-    // Test 1: BaseNetworkable SDK
-    std::cout << "--- Test 1: BaseNetworkable SDK ---\n";
     uintptr_t bn = ga + 0xFB99108;
     std::cout << "BaseNetworkable: 0x" << bn << "\n";
 
     uintptr_t sf = Read<uintptr_t>(hProc, bn + 0xB8);
     std::cout << "Static Fields: 0x" << sf << "\n";
 
-    uintptr_t wrapper = Read<uintptr_t>(hProc, sf + 0x8);
-    std::cout << "Wrapper (+0x8): 0x" << wrapper << "\n";
+    // تست offsetهای مختلف wrapper
+    std::vector<uint32_t> offsets = {0x0, 0x8, 0x10, 0x20, 0x28, 0x30};
+    for (auto off : offsets) {
+        uintptr_t w = Read<uintptr_t>(hProc, sf + off);
+        std::cout << "Wrapper (+" << std::hex << off << "): 0x" << w << "\n";
 
-    uintptr_t hv1 = Read<uintptr_t>(hProc, wrapper + 0x18);
-    std::cout << "HV1: 0x" << hv1 << "\n";
-
-    uintptr_t dec1 = decryption::base_networkable_0(hv1);
-    std::cout << "Dec1: 0x" << dec1 << "\n";
-
-    uintptr_t parent = Read<uintptr_t>(hProc, dec1 + 0x10);
-    std::cout << "Parent: 0x" << parent << "\n";
-
-    if (parent) {
-        uintptr_t hv2 = Read<uintptr_t>(hProc, parent + 0x18);
-        uintptr_t dict = decryption::base_networkable_1(hv2);
-        uintptr_t buffer = Read<uintptr_t>(hProc, dict + 0x10);
-        int count = Read<int>(hProc, dict + 0x18);
-        std::cout << "Buffer: 0x" << buffer << "\n";
-        std::cout << "Count: " << std::dec << count << "\n";
-    } else {
-        std::cout << "[!] Parent صفر شد\n";
+        if (w > 0x10000) {
+            uintptr_t hv = Read<uintptr_t>(hProc, w + 0x18);
+            std::cout << "  HV (+0x18): 0x" << hv << "\n";
+            if (hv) {
+                uintptr_t dec = decryption::base_networkable_0(hv);
+                std::cout << "  Dec: 0x" << dec << "\n";
+            }
+        }
     }
 
-    // Test 2: Direct RVA
-    std::cout << "\n--- Test 2: Direct Entity List ---\n";
-    uintptr_t direct = ga + 0x3c830a0;
-    int direct_count = Read<int>(hProc, direct + 0x18);
-    std::cout << "Direct Count: " << direct_count << "\n";
+    std::cout << "\nDirect Count: " << std::dec << Read<int>(hProc, ga + 0x3c830a0 + 0x18) << "\n";
 
     CloseHandle(hProc);
     system("pause");
