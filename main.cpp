@@ -4,8 +4,37 @@
 #include <iomanip>
 #include <string>
 
-DWORD GetProcessId(const wchar_t* procName) { /* همان قبلی */ }
-uintptr_t GetModuleBase(DWORD pid, const wchar_t* modName) { /* همان قبلی */ }
+DWORD GetProcessId(const wchar_t* procName) {
+    PROCESSENTRY32W pe{ sizeof(pe) };
+    HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+    if (snap == INVALID_HANDLE_VALUE) return 0;
+    if (Process32FirstW(snap, &pe)) {
+        do {
+            if (_wcsicmp(pe.szExeFile, procName) == 0) {
+                CloseHandle(snap);
+                return pe.th32ProcessID;
+            }
+        } while (Process32NextW(snap, &pe));
+    }
+    CloseHandle(snap);
+    return 0;
+}
+
+uintptr_t GetModuleBase(DWORD pid, const wchar_t* modName) {
+    MODULEENTRY32W me{ sizeof(me) };
+    HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPMODULE | TH32CS_SNAPMODULE32, pid);
+    if (snap == INVALID_HANDLE_VALUE) return 0;
+    if (Module32FirstW(snap, &me)) {
+        do {
+            if (_wcsicmp(me.szModule, modName) == 0) {
+                CloseHandle(snap);
+                return reinterpret_cast<uintptr_t>(me.modBaseAddr);
+            }
+        } while (Module32NextW(snap, &me));
+    }
+    CloseHandle(snap);
+    return 0;
+}
 
 template<typename T>
 T Read(HANDLE hProc, uintptr_t addr) {
@@ -47,18 +76,25 @@ namespace decryption {
 }
 
 int main() {
-    std::cout << "=== Rust SDK Tester v2 ===\n\n";
+    std::cout << "=== Rust SDK Tester v3 ===\n\n";
 
     DWORD pid = GetProcessId(L"RustClient.exe");
-    if (!pid) { std::cout << "[-] Rust پیدا نشد!\n"; system("pause"); return 1; }
+    if (!pid) {
+        std::cout << "[-] RustClient.exe پیدا نشد!\n";
+        system("pause");
+        return 1;
+    }
 
     HANDLE hProc = OpenProcess(PROCESS_VM_READ, FALSE, pid);
-    if (!hProc) { std::cout << "[-] OpenProcess شکست!\n"; system("pause"); return 1; }
+    if (!hProc) {
+        std::cout << "[-] OpenProcess شکست خورد!\n";
+        system("pause");
+        return 1;
+    }
 
     uintptr_t ga = GetModuleBase(pid, L"GameAssembly.dll");
     std::cout << "[+] GameAssembly: 0x" << std::hex << ga << "\n";
 
-    // زنجیره کامل
     uintptr_t bn = ga + 0xFB99108;
     std::cout << "[+] BaseNetworkable: 0x" << bn << "\n";
 
@@ -83,7 +119,7 @@ int main() {
     int count = Read<int>(hProc, entity_dict + 0x18);
 
     std::cout << "[+] Buffer List: 0x" << buffer_list << "\n";
-    std::cout << "[+] Entity Count: " << std::dec << count << "\n";
+    std::cout << "[+] Entity Count: " << std::dec << count << "\n\n";
 
     CloseHandle(hProc);
     system("pause");
