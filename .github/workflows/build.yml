@@ -1,0 +1,26 @@
+name: Build Rust Tester
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Setup MSVC
+      uses: ilammy/msvc-dev-cmd@v1
+
+    - name: Build x64 Release
+      run: |
+        cl /EHsc /O2 /std:c++17 main.cpp /link /OUT:RustTester.exe /SUBSYSTEM:CONSOLE
+
+    - name: Upload Artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: RustTester-x64
+        path: RustTester.exe
