@@ -43,59 +43,49 @@ T Read(HANDLE hProc, uintptr_t addr) {
     return val;
 }
 
-// Decryption Placeholders
-uintptr_t decryptIl2cppHandle(uintptr_t handle) {
-    if (handle <= 0 || handle > 0xFFFFFFFFULL) return 0;
-    return handle;
-}
-
-uintptr_t client_entities(uintptr_t a1, HANDLE hProc) {
-    if (!a1) return 0;
-    uint64_t rax = Read<uint64_t>(hProc, a1 + 0x18);
-    uint32_t* rdx = reinterpret_cast<uint32_t*>(&rax);
-    for (uint32_t i = 0; i < 2; ++i) {
-        uint32_t eax = *rdx;
-        uint32_t ecx = eax;
-        // TODO: decryption واقعی اینجا (از IDA)
-        // مثال (ممکنه اشتباه باشه - باید از IDA بگیری):
-        eax = (eax ^ 0x1E7771E);
-        ecx = ecx >> 0x1A;
-        eax = (eax << 0x6) | ecx;
-        eax = eax - 0x1118D90C;
-        *rdx++ = eax;
+// ====================== Decryption از SDK ======================
+namespace decryption {
+    inline uintptr_t base_networkable_0(uintptr_t hv_value) {
+        uintptr_t rax = hv_value;
+        uint32_t* rdx = reinterpret_cast<uint32_t*>(&rax);
+        for (uint32_t _i = 0; _i < 2; ++_i) {
+            uint32_t v = *rdx;
+            v = (v << 16) | (v >> 16);
+            v ^= 0xFE89EFE3u;
+            v -= 0x7C71A258u;
+            *rdx = v;
+            ++rdx;
+        }
+        return rax;
     }
-    return decryptIl2cppHandle(rax);
-}
 
-uintptr_t entity_list(uintptr_t a1, HANDLE hProc) {
-    if (!a1) return 0;
-    uint64_t rax = Read<uint64_t>(hProc, a1 + 0x18);
-    uint32_t* rdx = reinterpret_cast<uint32_t*>(&rax);
-    for (uint32_t i = 0; i < 2; ++i) {
-        uint32_t eax = *rdx;
-        uint32_t ecx = eax;
-        // TODO: decryption واقعی
-        *rdx++ = eax;
+    inline uintptr_t base_networkable_1(uintptr_t hv_value) {
+        uintptr_t rax = hv_value;
+        uint32_t* rdx = reinterpret_cast<uint32_t*>(&rax);
+        for (uint32_t _i = 0; _i < 2; ++_i) {
+            uint32_t v = *rdx;
+            v += 0xEBB43A5Au;
+            v = (v << 23) | (v >> 9);
+            v += 0x4A9A11E7u;
+            v = (v << 28) | (v >> 4);
+            *rdx = v;
+            ++rdx;
+        }
+        return rax;
     }
-    return decryptIl2cppHandle(rax);
 }
 
+// ====================== Offsets ======================
 namespace offsets {
     uintptr_t GameAssembly = 0;
 
     namespace base_networkable {
-        constexpr uintptr_t typeinfo = 0xfd36298;
-    }
-
-    namespace main_camera {
-        constexpr uintptr_t typeinfo = 0xfd0a5c0;
-        constexpr uint32_t static_fields = 0xb8;
-        constexpr uint32_t instance = 0x28;
+        constexpr uintptr_t typeinfo = 0xFB99108;   // از SDK
     }
 }
 
 int main() {
-    std::cout << "=== Rust External Offset Tester ===\n\n";
+    std::cout << "=== Rust SDK Tester ===\n\n";
 
     DWORD pid = GetProcessId(L"RustClient.exe");
     if (!pid) {
@@ -114,18 +104,29 @@ int main() {
     offsets::GameAssembly = GetModuleBase(pid, L"GameAssembly.dll");
     std::cout << "[+] GameAssembly: 0x" << std::hex << offsets::GameAssembly << "\n";
 
+    // تست زنجیره BaseNetworkable
     uintptr_t bn = offsets::GameAssembly + offsets::base_networkable::typeinfo;
     std::cout << "[+] BaseNetworkable: 0x" << bn << "\n";
 
     uintptr_t static_fields = Read<uintptr_t>(hProc, bn + 0xB8);
     std::cout << "[+] Static Fields: 0x" << static_fields << "\n";
 
-    uintptr_t direct_ent = offsets::GameAssembly + 0x3c830a0;
-    int count = Read<int>(hProc, direct_ent + 0x18);
-    std::cout << "[+] Entity Count: " << std::dec << count << "\n";
+    // wrapper + parent + entity list (از SDK)
+    uintptr_t wrapper = Read<uintptr_t>(hProc, static_fields + 0x8);
+    uintptr_t hv = Read<uintptr_t>(hProc, wrapper + 0x18);
+    uintptr_t decrypted = decryption::base_networkable_0(hv);
+
+    uintptr_t parent = Read<uintptr_t>(hProc, decrypted + 0x10);
+    uintptr_t hv2 = Read<uintptr_t>(hProc, parent + 0x18);
+    uintptr_t entity_list_base = decryption::base_networkable_1(hv2);
+
+    uintptr_t buffer = Read<uintptr_t>(hProc, entity_list_base + 0x10);
+    int count = Read<int>(hProc, entity_list_base + 0x18);
+
+    std::cout << "[+] Entity Buffer: 0x" << buffer << "\n";
+    std::cout << "[+] Entity Count : " << std::dec << count << "\n";
 
     CloseHandle(hProc);
-    std::cout << "\nتست تمام شد.\n";
     system("pause");
     return 0;
 }
