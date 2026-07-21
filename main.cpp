@@ -1,12 +1,14 @@
 // ========================================================================
 // Simple External ESP for Rust
 // Build with CMake (Windows, C++17)
-// GitHub Workflow included via .github/workflows/build.yml
+// GitHub Workflow included
 // ========================================================================
 
 #include <windows.h>
 #include <dwmapi.h>
 #include <gdiplus.h>
+#include <psapi.h>
+#include <tlhelp32.h>
 #include <string>
 #include <vector>
 #include <algorithm>
@@ -21,6 +23,9 @@
 #pragma comment(lib, "user32.lib")
 #pragma comment(lib, "gdi32.lib")
 #pragma comment(lib, "kernel32.lib")
+#pragma comment(lib, "psapi.lib")
+
+using namespace Gdiplus;
 
 // ----------------------------------------------------------------
 // Offsets (combined from your dump and User 4)
@@ -111,6 +116,13 @@ namespace decrypt {
 }
 
 // ----------------------------------------------------------------
+// Vec2, Vec3, Vec4
+// ----------------------------------------------------------------
+struct Vec2 { float x, y; };
+struct Vec3 { float x, y, z; };
+struct Vec4 { float x, y, z, w; };
+
+// ----------------------------------------------------------------
 // Memory utilities
 // ----------------------------------------------------------------
 class Memory {
@@ -124,7 +136,7 @@ public:
         PROCESSENTRY32W pe = { sizeof(PROCESSENTRY32W) };
         if (Process32FirstW(snap, &pe)) {
             do {
-                if (wcscmp(pe.szExeFile, procName) == 0) {
+                if (_wcsicmp(pe.szExeFile, procName) == 0) {
                     pid = pe.th32ProcessID;
                     break;
                 }
@@ -148,6 +160,11 @@ public:
         return ReadProcessMemory(process, (LPCVOID)addr, &out, sizeof(T), nullptr);
     }
 
+    // overload for reading into buffer
+    bool read(uintptr_t addr, void* buffer, size_t size) const {
+        return ReadProcessMemory(process, (LPCVOID)addr, buffer, size, nullptr);
+    }
+
     uintptr_t readPtr(uintptr_t addr) const {
         uintptr_t val = 0;
         read(addr, val);
@@ -159,20 +176,16 @@ public:
 // GCHandle helper
 // ----------------------------------------------------------------
 uintptr_t get_gchandle_target(uintptr_t handle, const Memory& mem) {
-    // handle is an index into global handle table
     uintptr_t handleTable = mem.base + offsets::il2cpp::gc_handles;
-    uintptr_t target;
-    if (mem.read(handleTable + handle * 8, target)) // assuming 64-bit pointers
+    uintptr_t target = 0;
+    if (mem.read(handleTable + handle * 8, target))
         return target;
     return 0;
 }
 
 // ----------------------------------------------------------------
-// W2S
+// World to Screen
 // ----------------------------------------------------------------
-struct Vec3 { float x, y, z; };
-struct Vec4 { float x, y, z, w; };
-
 bool world_to_screen(const Vec3& world, Vec2& screen, const float* viewMatrix, int width, int height) {
     Vec4 clip;
     clip.x = world.x * viewMatrix[0] + world.y * viewMatrix[4] + world.z * viewMatrix[8] + viewMatrix[12];
@@ -237,7 +250,7 @@ std::vector<Entity> get_entities(const Memory& mem, uintptr_t localPlayerPtr) {
     if (!bufferList) return {};
 
     uintptr_t array;
-    if (!mem.read(bufferList + 0x10, array)) return {}; // array pointer is at +0x10 in buffer wrapper
+    if (!mem.read(bufferList + 0x10, array)) return {};
     array = get_gchandle_target(array, mem);
     if (!array) return {};
 
@@ -269,24 +282,25 @@ std::vector<Entity> get_entities(const Memory& mem, uintptr_t localPlayerPtr) {
         mem.read(model + offsets::player_model::position, pos);
 
         // get name
+        std::wstring name = L"Unknown";
         uintptr_t namePtr = mem.readPtr(ent + offsets::base_player::username);
         if (namePtr) {
             int len;
-            mem.read(namePtr + 0x10, len); // il2cpp string length
+            mem.read(namePtr + 0x10, len);
             if (len > 0 && len < 64) {
                 wchar_t* buf = new wchar_t[len + 1];
-                mem.read(namePtr + 0x14, buf, len * 2);
-                buf[len] = 0;
-                entities.push_back({ ent, pos, health, maxHealth, true, false, std::wstring(buf) });
+                if (mem.read(namePtr + 0x14, buf, len * 2)) {
+                    buf[len] = 0;
+                    name = buf;
+                }
                 delete[] buf;
-                continue;
             }
         }
-        entities.push_back({ ent, pos, health, maxHealth, true, false, L"Unknown" });
+
+        entities.push_back({ ent, pos, health, maxHealth, true, false, name });
     }
 
     // identify local player
-    // local player from slot
     uintptr_t slotKlass = mem.base + offsets::local_player::slot_klass_rva;
     uintptr_t slotStatic;
     mem.read(slotKlass + offsets::base_networkable::static_fields, slotStatic);
@@ -313,7 +327,7 @@ public:
     HWND hwnd = nullptr;
     int width, height;
     HDC hdc = nullptr;
-    Gdiplus::Graphics* graphics = nullptr;
+    Graphics* graphics = nullptr;
 
     bool create(const wchar_t* title, int w, int h) {
         width = w; height = h;
@@ -346,10 +360,7 @@ public:
         ShowWindow(hwnd, SW_SHOW);
 
         hdc = GetDC(hwnd);
-        Gdiplus::GdiplusStartupInput gdiInput;
-        ULONG_PTR token;
-        Gdiplus::GdiplusStartup(&token, &gdiInput, nullptr);
-        graphics = new Gdiplus::Graphics(hdc);
+        graphics = new Graphics(hdc);
         return true;
     }
 
@@ -366,45 +377,51 @@ public:
         HBRUSH brush = CreateSolidBrush(RGB(0,0,0));
         FillRect(hdc, &rect, brush);
         DeleteObject(brush);
-        graphics->Clear(Gdiplus::Color(0,0,0,0));
+        graphics->Clear(Color(0,0,0,0));
     }
 
     void endDraw() {
         // no swap needed for GDI
     }
 
-    void drawBox(float x, float y, float w, float h, Gdiplus::Color color, float thickness = 1.0f) {
-        Gdiplus::Pen pen(color, thickness);
+    void drawBox(float x, float y, float w, float h, Color color, float thickness = 1.0f) {
+        Pen pen(color, thickness);
         graphics->DrawRectangle(&pen, x, y, w, h);
     }
 
     void drawHealthBar(float x, float y, float w, float h, float healthPercent) {
         // background
-        Gdiplus::SolidBrush bgBrush(Gdiplus::Color(128, 0, 0, 0));
+        SolidBrush bgBrush(Color(128, 0, 0, 0));
         graphics->FillRectangle(&bgBrush, x, y, w, h);
         // health
-        Gdiplus::Color healthColor = healthPercent > 0.5f ? Gdiplus::Color(0, 255, 0) : 
-                                      healthPercent > 0.25f ? Gdiplus::Color(255, 255, 0) : Gdiplus::Color(255, 0, 0);
-        Gdiplus::SolidBrush healthBrush(healthColor);
+        Color healthColor = healthPercent > 0.5f ? Color(0, 255, 0) : 
+                            healthPercent > 0.25f ? Color(255, 255, 0) : Color(255, 0, 0);
+        SolidBrush healthBrush(healthColor);
         graphics->FillRectangle(&healthBrush, x+1, y+1, (w-2) * healthPercent, h-2);
     }
 
-    void drawText(const std::wstring& text, float x, float y, Gdiplus::Color color, float size = 10) {
-        Gdiplus::Font font(L"Arial", size, Gdiplus::FontStyleRegular, Gdiplus::UnitPixel);
-        Gdiplus::SolidBrush brush(color);
-        Gdiplus::PointF pt(x, y);
+    void drawText(const std::wstring& text, float x, float y, Color color, float size = 10) {
+        Font font(L"Arial", size, FontStyleRegular, UnitPixel);
+        SolidBrush brush(color);
+        PointF pt(x, y);
         graphics->DrawString(text.c_str(), -1, &font, pt, &brush);
     }
 };
 
 // ----------------------------------------------------------------
-// Main loop
+// Main entry point
 // ----------------------------------------------------------------
-int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
+int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int) {
+    // Initialize GDI+
+    ULONG_PTR gdiToken;
+    GdiplusStartupInput gdiInput;
+    GdiplusStartup(&gdiToken, &gdiInput, nullptr);
+
     // Attach to Rust
     Memory mem;
     if (!mem.attach(L"RustClient.exe")) {
         MessageBoxW(nullptr, L"RustClient.exe not found", L"Error", MB_OK);
+        GdiplusShutdown(gdiToken);
         return 1;
     }
 
@@ -416,6 +433,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
     Overlay overlay;
     if (!overlay.create(L"ESP", screenW, screenH)) {
         MessageBoxW(nullptr, L"Failed to create overlay", L"Error", MB_OK);
+        GdiplusShutdown(gdiToken);
         return 1;
     }
 
@@ -423,7 +441,10 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
     MSG msg;
     while (true) {
         while (PeekMessage(&msg, nullptr, 0, 0, PM_REMOVE)) {
-            if (msg.message == WM_QUIT) return 0;
+            if (msg.message == WM_QUIT) {
+                GdiplusShutdown(gdiToken);
+                return 0;
+            }
             TranslateMessage(&msg);
             DispatchMessage(&msg);
         }
@@ -438,7 +459,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
         mem.read(camObj + offsets::main_camera::viewMatrix, viewMatrix);
 
         // Get entities
-        auto entities = get_entities(mem, 0); // local not needed for box
+        auto entities = get_entities(mem, 0);
 
         // Draw
         overlay.beginDraw();
@@ -451,7 +472,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
             if (!world_to_screen(ent.position, screenPos, viewMatrix, screenW, screenH))
                 continue;
 
-            // approximate box height (2 meters) and width (0.6 meters) - scale with distance
+            // approximate box height (1.8m) and width (0.6m) - scale with distance
             Vec3 top = { ent.position.x, ent.position.y + 1.8f, ent.position.z };
             Vec2 topScreen;
             if (!world_to_screen(top, topScreen, viewMatrix, screenW, screenH))
@@ -460,7 +481,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
             float width = height * 0.45f;
 
             // Draw box
-            Gdiplus::Color boxColor = ent.isLocal ? Gdiplus::Color(0, 255, 255) : Gdiplus::Color(255, 0, 0);
+            Color boxColor = ent.isLocal ? Color(0, 255, 255) : Color(255, 0, 0);
             overlay.drawBox(screenPos.x - width/2, topScreen.y, width, height, boxColor);
 
             // Health bar
@@ -468,7 +489,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
             overlay.drawHealthBar(screenPos.x - width/2, topScreen.y - 6, width, 4, healthPercent);
 
             // Name
-            overlay.drawText(ent.name, screenPos.x - width/2, topScreen.y - 20, Gdiplus::Color(255,255,255), 10);
+            overlay.drawText(ent.name, screenPos.x - width/2, topScreen.y - 20, Color(255,255,255), 10);
         }
 
         overlay.endDraw();
@@ -476,5 +497,6 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
         Sleep(15);
     }
 
+    GdiplusShutdown(gdiToken);
     return 0;
 }
