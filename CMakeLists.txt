@@ -4,7 +4,7 @@ project(RustESP)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-add_executable(RustESP main.cpp)
+add_executable(RustESP WIN32 main.cpp)
 
 target_link_libraries(RustESP 
     user32
