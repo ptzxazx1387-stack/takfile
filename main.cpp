@@ -130,28 +130,36 @@ public:
     uintptr_t base = 0;
 
     bool attach(const wchar_t* procName) {
-        DWORD pid = 0;
-        HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
-        PROCESSENTRY32W pe = { sizeof(PROCESSENTRY32W) };
-        if (Process32FirstW(snap, &pe)) {
-            do {
-                if (_wcsicmp(pe.szExeFile, procName) == 0) {
-                    pid = pe.th32ProcessID;
-                    break;
+        // try multiple possible process names
+        const wchar_t* names[] = { L"RustClient.exe", L"Rust.exe", L"RustClient" };
+        for (const auto& name : names) {
+            DWORD pid = 0;
+            HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+            PROCESSENTRY32W pe = { sizeof(PROCESSENTRY32W) };
+            if (Process32FirstW(snap, &pe)) {
+                do {
+                    if (_wcsicmp(pe.szExeFile, name) == 0) {
+                        pid = pe.th32ProcessID;
+                        break;
+                    }
+                } while (Process32NextW(snap, &pe));
+            }
+            CloseHandle(snap);
+            if (pid) {
+                process = OpenProcess(PROCESS_VM_READ, FALSE, pid);
+                if (process) {
+                    HMODULE hMods[1024];
+                    DWORD cbNeeded;
+                    if (EnumProcessModules(process, hMods, sizeof(hMods), &cbNeeded)) {
+                        base = (uintptr_t)hMods[0];
+                        return true;
+                    }
+                    CloseHandle(process);
+                    process = nullptr;
                 }
-            } while (Process32NextW(snap, &pe));
+            }
         }
-        CloseHandle(snap);
-        if (!pid) return false;
-        process = OpenProcess(PROCESS_VM_READ, FALSE, pid);
-        if (!process) return false;
-        // get base address
-        HMODULE hMods[1024];
-        DWORD cbNeeded;
-        if (EnumProcessModules(process, hMods, sizeof(hMods), &cbNeeded)) {
-            base = (uintptr_t)hMods[0];
-        }
-        return base != 0;
+        return false;
     }
 
     template<typename T>
@@ -415,10 +423,10 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int) {
     GdiplusStartupInput gdiInput;
     GdiplusStartup(&gdiToken, &gdiInput, nullptr);
 
-    // Attach to Rust
+    // Attach to Rust - try multiple names
     Memory mem;
-    if (!mem.attach(L"RustClient.exe")) {
-        MessageBoxW(nullptr, L"RustClient.exe not found", L"Error", MB_OK);
+    if (!mem.attach(L"RustClient.exe") && !mem.attach(L"Rust.exe") && !mem.attach(L"RustClient")) {
+        MessageBoxW(nullptr, L"Rust process not found. Make sure the game is running.", L"Error", MB_OK);
         GdiplusShutdown(gdiToken);
         return 1;
     }
