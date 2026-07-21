@@ -1,6 +1,6 @@
 // ========================================================================
 // Simple External ESP for Rust
-// Build with CMake (Windows, C++17)
+// Build with CMake (Windows, C++17, GUI application)
 // GitHub Workflow included
 // ========================================================================
 
@@ -58,7 +58,6 @@ namespace offsets {
         inline constexpr std::uintptr_t playerEyes = 0x3D8;
         inline constexpr std::uintptr_t clActiveItem = 0x568;
         inline constexpr std::uintptr_t team = 0x538;
-        inline constexpr std::uint32_t player_eyes_off = 0x3D8; // alias
     }
     namespace base_entity {
         inline constexpr std::uintptr_t model = 0x1A8;
@@ -160,7 +159,6 @@ public:
         return ReadProcessMemory(process, (LPCVOID)addr, &out, sizeof(T), nullptr);
     }
 
-    // overload for reading into buffer
     bool read(uintptr_t addr, void* buffer, size_t size) const {
         return ReadProcessMemory(process, (LPCVOID)addr, buffer, size, nullptr);
     }
@@ -409,7 +407,7 @@ public:
 };
 
 // ----------------------------------------------------------------
-// Main entry point
+// Main entry point (WinMain)
 // ----------------------------------------------------------------
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int) {
     // Initialize GDI+
