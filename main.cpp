@@ -14,7 +14,6 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
-#include <memory>
 #include <thread>
 #include <chrono>
 
@@ -24,6 +23,9 @@
 #pragma comment(lib, "gdi32.lib")
 #pragma comment(lib, "kernel32.lib")
 #pragma comment(lib, "psapi.lib")
+
+// Request admin privileges at link time
+#pragma comment(linker, "/MANIFESTUAC:\"level='requireAdministrator' uiAccess='false'\"")
 
 using namespace Gdiplus;
 
@@ -129,12 +131,12 @@ public:
     HANDLE process = nullptr;
     uintptr_t base = 0;
 
-    bool attach(const wchar_t* procName) {
-        // try multiple possible process names
+    bool attach() {
         const wchar_t* names[] = { L"RustClient.exe", L"Rust.exe", L"RustClient" };
         for (const auto& name : names) {
             DWORD pid = 0;
             HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+            if (snap == INVALID_HANDLE_VALUE) continue;
             PROCESSENTRY32W pe = { sizeof(PROCESSENTRY32W) };
             if (Process32FirstW(snap, &pe)) {
                 do {
@@ -377,7 +379,6 @@ public:
     }
 
     void beginDraw() {
-        // clear to transparent
         RECT rect;
         GetClientRect(hwnd, &rect);
         HBRUSH brush = CreateSolidBrush(RGB(0,0,0));
@@ -387,7 +388,7 @@ public:
     }
 
     void endDraw() {
-        // no swap needed for GDI
+        // nothing
     }
 
     void drawBox(float x, float y, float w, float h, Color color, float thickness = 1.0f) {
@@ -396,10 +397,8 @@ public:
     }
 
     void drawHealthBar(float x, float y, float w, float h, float healthPercent) {
-        // background
         SolidBrush bgBrush(Color(128, 0, 0, 0));
         graphics->FillRectangle(&bgBrush, x, y, w, h);
-        // health
         Color healthColor = healthPercent > 0.5f ? Color(0, 255, 0) : 
                             healthPercent > 0.25f ? Color(255, 255, 0) : Color(255, 0, 0);
         SolidBrush healthBrush(healthColor);
@@ -423,12 +422,21 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int) {
     GdiplusStartupInput gdiInput;
     GdiplusStartup(&gdiToken, &gdiInput, nullptr);
 
-    // Attach to Rust - try multiple names
+    // Try to attach to Rust process, wait until found
     Memory mem;
-    if (!mem.attach(L"RustClient.exe") && !mem.attach(L"Rust.exe") && !mem.attach(L"RustClient")) {
-        MessageBoxW(nullptr, L"Rust process not found. Make sure the game is running.", L"Error", MB_OK);
-        GdiplusShutdown(gdiToken);
-        return 1;
+    bool attached = false;
+    while (!attached) {
+        if (mem.attach()) {
+            attached = true;
+            break;
+        }
+        // Show waiting message once
+        static bool first = true;
+        if (first) {
+            MessageBoxW(nullptr, L"Waiting for Rust process (RustClient.exe or Rust.exe)...\nStart the game and press OK.", L"ESP", MB_OK);
+            first = false;
+        }
+        Sleep(1000);
     }
 
     // Get screen size
@@ -478,7 +486,6 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int) {
             if (!world_to_screen(ent.position, screenPos, viewMatrix, screenW, screenH))
                 continue;
 
-            // approximate box height (1.8m) and width (0.6m) - scale with distance
             Vec3 top = { ent.position.x, ent.position.y + 1.8f, ent.position.z };
             Vec2 topScreen;
             if (!world_to_screen(top, topScreen, viewMatrix, screenW, screenH))
@@ -486,15 +493,12 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int) {
             float height = std::abs(screenPos.y - topScreen.y);
             float width = height * 0.45f;
 
-            // Draw box
             Color boxColor = ent.isLocal ? Color(0, 255, 255) : Color(255, 0, 0);
             overlay.drawBox(screenPos.x - width/2, topScreen.y, width, height, boxColor);
 
-            // Health bar
             float healthPercent = ent.health / ent.maxHealth;
             overlay.drawHealthBar(screenPos.x - width/2, topScreen.y - 6, width, 4, healthPercent);
 
-            // Name
             overlay.drawText(ent.name, screenPos.x - width/2, topScreen.y - 20, Color(255,255,255), 10);
         }
 
