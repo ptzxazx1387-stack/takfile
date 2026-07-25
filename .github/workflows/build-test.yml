@@ -1,34 +1,45 @@
-name: Build Test Driver
+name: Build DllProxyGenerator
 
+# زمان اجرای workflow: به صورت دستی (workflow_dispatch) و بر روی هر push به شاخه‌ی main
 on:
-  workflow_dispatch:
+  workflow_dispatch: # امکان اجرای دستی
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+env:
+  SOLUTION_FILE_PATH: . # مسیر فایل Solution (ریشه‌ی پروژه)
+  BUILD_CONFIGURATION: Release # یا می‌توانید Debug را هم تنظیم کنید
 
 jobs:
   build:
-    runs-on: windows-2022
-    strategy:
-      matrix:
-        configuration: [Release]
-        platform: [x64]
+    runs-on: windows-latest # پروژه ویندوزی است و نیاز به ویژوال استودیو دارد
 
     steps:
-    - name: Checkout repository
+    - name: ۱. دریافت کد (Checkout)
       uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
 
-    - name: Setup MSBuild
+    # پروژه از دات‌نت فریمورک استفاده می‌کند، بنابراین نیازی به نصب .NET Core/5+ نیست.
+    # اکشن زیر، محیط مخصوص ویژوال استودیو را با ابزارهای بیلد (MSBuild) تنظیم می‌کند.
+    - name: ۲. راه‌اندازی محیط ویژوال استودیو
       uses: microsoft/setup-msbuild@v2
 
-    - name: Build test driver
-      shell: cmd
-      run: |
-        msbuild test_driver.vcxproj ^
-          /p:Configuration=${{ matrix.configuration }} ^
-          /p:Platform=${{ matrix.platform }} ^
-          /p:SignMode=Off
+    # این مرحله برای اطمینان از نصب vcpkg یا بسته‌های خاص است، اما به نظر نمی‌رسد پروژه به آن نیاز داشته باشد.
+    # با این حال، اگر وابستگی خاصی داشتید، می‌توانید آن را اضافه کنید.
 
-    - name: Upload test driver
+    - name: ۳. بیلد کردن پروژه با MSBuild
+      working-directory: ${{env.SOLUTION_FILE_PATH}}
+      # دستور بیلد با پیکربندی Release
+      run: msbuild /m /p:Configuration=${{env.BUILD_CONFIGURATION}} DllProxyGenerator.sln
+
+    # فایل‌های خروجی (فایل exe و dllهای وابسته) را در یک آرتیفکت ذخیره می‌کند تا بتوانید دانلودشان کنید.
+    - name: ۴. ذخیره‌ی خروجی بیلد (آپلود آرتیفکت)
       uses: actions/upload-artifact@v4
       with:
-        name: TestDriver
-        path: x64\Release\test_driver.sys
-        if-no-files-found: error
+        name: DllProxyGenerator-Build
+        path: |
+          DllProxyGenerator\bin\${{env.BUILD_CONFIGURATION}}\
+          !**/*.pdb # (اختیاری) فایل‌های pdb را حذف کنید تا حجم کم شود
