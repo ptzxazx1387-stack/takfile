@@ -1,20 +1,33 @@
-name: Build ESP
+name: Build Test Client
 
-on: [push, pull_request]
+on:
+  push:
+    branches: [ "main" ]
+  workflow_dispatch:
 
 jobs:
   build:
     runs-on: windows-latest
+    strategy:
+      matrix:
+        configuration: [Release]
+        platform: [x64]
+
     steps:
-      - uses: actions/checkout@v4
-      - name: Setup CMake
-        uses: jwlawson/actions-setup-cmake@v2
-      - name: Configure
-        run: cmake -B build -DCMAKE_BUILD_TYPE=Release
-      - name: Build
-        run: cmake --build build --config Release
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: esp-exe
-          path: build/Release/*.exe
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Setup MSBuild
+      uses: microsoft/setup-msbuild@v2
+
+    - name: Build test client
+      shell: cmd
+      run: |
+        cl.exe full_test.cpp /EHsc /Fe:full_test.exe /O2 /link ntdll.lib
+
+    - name: Upload test client
+      uses: actions/upload-artifact@v4
+      with:
+        name: full_test
+        path: full_test.exe
+        if-no-files-found: error
