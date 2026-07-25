@@ -1,9 +1,7 @@
 name: Build DLL Proxy Generator from Original Repo
 
 on:
-  workflow_dispatch: # اجرای دستی
-  # push: # در صورت نیاز می‌توانید آن را فعال کنید
-  #   branches: [ "main" ]
+  workflow_dispatch:
 
 jobs:
   build:
@@ -13,27 +11,32 @@ jobs:
     - name: ۱. دریافت کد پروژه از ریپازیتوری اصلی
       uses: actions/checkout@v4
       with:
-        # آدرس ریپازیتوری اصلی را مشخص می‌کنیم
         repository: maluramichael/dll-proxy-generator
-        # شاخه‌ای که می‌خواهید بیلد شود (معمولاً main)
-        ref: main
-        # مسیری که کدها در آن ذخیره می‌شوند (پیش‌فرض: پوشه‌ی کار)
+        # ★★★ شاخه‌ی صحیح را مشخص کنید ★★★
+        ref: master  # به جای main از master استفاده شده است
         path: dll-proxy-generator-src
+        # برای کاهش خطا، عمق fetch را افزایش دهید (اختیاری)
+        fetch-depth: 1
 
-    - name: ۲. راه‌اندازی محیط ویژوال استودیو (شامل MSBuild)
+    - name: ۲. راه‌اندازی محیط ویژوال استودیو
       uses: microsoft/setup-msbuild@v2
 
     - name: ۳. بیلد کردن پروژه با MSBuild
       working-directory: dll-proxy-generator-src
-      run: msbuild /m /p:Configuration=Release DllProxyGenerator.sln
-
-    - name: ۴. نمایش فایل‌های ساخته شده (برای عیب‌یابی)
+      # اگر مسیر فایل solution دقیق نیست، می‌توانید از جستجو استفاده کنید
       run: |
-        echo "محتوای پوشه‌ی خروجی:"
-        dir dll-proxy-generator-src\DllProxyGenerator\bin\Release\
+        $slnFile = Get-ChildItem -Recurse -Filter "*.sln" | Select-Object -First 1
+        if ($slnFile) {
+          Write-Host "یافتن فایل Solution: $($slnFile.FullName)"
+          msbuild /m /p:Configuration=Release "$($slnFile.FullName)"
+        } else {
+          Write-Host "خطا: هیچ فایل .sln یافت نشد!"
+          exit 1
+        }
 
-    - name: ۵. ذخیره‌ی فایل اجرایی به عنوان آرتیفکت
+    - name: ۴. ذخیره‌ی فایل اجرایی به عنوان آرتیفکت
       uses: actions/upload-artifact@v4
       with:
         name: DllProxyGenerator-Executable
-        path: dll-proxy-generator-src\DllProxyGenerator\bin\Release\DllProxyGenerator.exe
+        # مسیر دقیق‌تر برای اطمینان از پیدا کردن فایل exe
+        path: dll-proxy-generator-src\DllProxyGenerator\bin\Release\*.exe
