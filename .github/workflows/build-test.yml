@@ -19,9 +19,14 @@ jobs:
         cd kdmapper
         msbuild kdmapper.sln /p:Configuration=Release /p:Platform=x64
     
+    - name: List output
+      shell: cmd
+      run: |
+        dir /s kdmapper\*.exe
+
     - name: Upload kdmapper
       uses: actions/upload-artifact@v4
       with:
         name: kdmapper
-        path: kdmapper\x64\Release\kdmapper.exe
+        path: kdmapper\**\kdmapper.exe
         if-no-files-found: error
