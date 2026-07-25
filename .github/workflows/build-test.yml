@@ -1,8 +1,6 @@
-name: Build Test Client
+name: Build kdmapper
 
 on:
-  push:
-    branches: [ "main" ]
   workflow_dispatch:
 
 jobs:
@@ -10,25 +8,20 @@ jobs:
     runs-on: windows-latest
     
     steps:
-    - name: Checkout repository
-      uses: actions/checkout@v4
-
+    - name: Clone kdmapper
+      run: git clone https://github.com/TheCruZ/kdmapper.git
+    
     - name: Setup MSBuild
       uses: microsoft/setup-msbuild@v2
-
-    - name: Setup Developer Command Prompt
-      uses: ilammy/msvc-dev-cmd@v1
-      with:
-        arch: x64
-
-    - name: Build test client
-      shell: cmd
+    
+    - name: Build kdmapper
       run: |
-        cl.exe full_test.cpp /EHsc /Fe:full_test.exe /O2 /link ntdll.lib
-
-    - name: Upload test client
+        cd kdmapper
+        msbuild kdmapper.sln /p:Configuration=Release /p:Platform=x64
+    
+    - name: Upload kdmapper
       uses: actions/upload-artifact@v4
       with:
-        name: full_test
-        path: full_test.exe
+        name: kdmapper
+        path: kdmapper\x64\Release\kdmapper.exe
         if-no-files-found: error
