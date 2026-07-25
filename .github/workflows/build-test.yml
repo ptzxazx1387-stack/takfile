@@ -18,15 +18,18 @@ jobs:
       run: |
         cd kdmapper
         msbuild kdmapper.sln /p:Configuration=Release /p:Platform=x64
-    
-    - name: List output
-      shell: cmd
-      run: |
-        dir /s kdmapper\*.exe
 
-    - name: Upload kdmapper
+    - name: Show build output
+      shell: powershell
+      run: |
+        Get-ChildItem -Path kdmapper -Recurse -Filter *.exe | Select-Object FullName
+        Get-ChildItem -Path kdmapper -Recurse -Filter *.sys | Select-Object FullName
+
+    - name: Upload whatever we got
       uses: actions/upload-artifact@v4
       with:
-        name: kdmapper
-        path: kdmapper\**\kdmapper.exe
-        if-no-files-found: error
+        name: kdmapper-files
+        path: |
+          kdmapper\**\*.exe
+          kdmapper\**\*.sys
+        if-no-files-found: warn
