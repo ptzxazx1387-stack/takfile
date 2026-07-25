@@ -1,27 +1,34 @@
-name: Build kdmapper
+name: Build Test Driver
 
 on:
   workflow_dispatch:
 
 jobs:
   build:
-    runs-on: windows-latest
-    
+    runs-on: windows-2022
+    strategy:
+      matrix:
+        configuration: [Release]
+        platform: [x64]
+
     steps:
-    - name: Clone kdmapper
-      run: git clone https://github.com/TheCruZ/kdmapper.git
-    
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
     - name: Setup MSBuild
       uses: microsoft/setup-msbuild@v2
-    
-    - name: Build kdmapper
-      run: |
-        cd kdmapper
-        msbuild kdmapper.sln /p:Configuration=Release /p:Platform=x64
 
-    - name: Upload kdmapper
+    - name: Build test driver
+      shell: cmd
+      run: |
+        msbuild test_driver.vcxproj ^
+          /p:Configuration=${{ matrix.configuration }} ^
+          /p:Platform=${{ matrix.platform }} ^
+          /p:SignMode=Off
+
+    - name: Upload test driver
       uses: actions/upload-artifact@v4
       with:
-        name: kdmapper
-        path: kdmapper\x64\Release\kdmapper_Release.exe
+        name: TestDriver
+        path: x64\Release\test_driver.sys
         if-no-files-found: error
