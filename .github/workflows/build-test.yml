@@ -1,45 +1,39 @@
-name: Build DllProxyGenerator
+name: Build DLL Proxy Generator from Original Repo
 
-# زمان اجرای workflow: به صورت دستی (workflow_dispatch) و بر روی هر push به شاخه‌ی main
 on:
-  workflow_dispatch: # امکان اجرای دستی
-  push:
-    branches: [ "main" ]
-  pull_request:
-    branches: [ "main" ]
-
-env:
-  SOLUTION_FILE_PATH: . # مسیر فایل Solution (ریشه‌ی پروژه)
-  BUILD_CONFIGURATION: Release # یا می‌توانید Debug را هم تنظیم کنید
+  workflow_dispatch: # اجرای دستی
+  # push: # در صورت نیاز می‌توانید آن را فعال کنید
+  #   branches: [ "main" ]
 
 jobs:
   build:
-    runs-on: windows-latest # پروژه ویندوزی است و نیاز به ویژوال استودیو دارد
+    runs-on: windows-latest
 
     steps:
-    - name: ۱. دریافت کد (Checkout)
+    - name: ۱. دریافت کد پروژه از ریپازیتوری اصلی
       uses: actions/checkout@v4
       with:
-        fetch-depth: 0
+        # آدرس ریپازیتوری اصلی را مشخص می‌کنیم
+        repository: maluramichael/dll-proxy-generator
+        # شاخه‌ای که می‌خواهید بیلد شود (معمولاً main)
+        ref: main
+        # مسیری که کدها در آن ذخیره می‌شوند (پیش‌فرض: پوشه‌ی کار)
+        path: dll-proxy-generator-src
 
-    # پروژه از دات‌نت فریمورک استفاده می‌کند، بنابراین نیازی به نصب .NET Core/5+ نیست.
-    # اکشن زیر، محیط مخصوص ویژوال استودیو را با ابزارهای بیلد (MSBuild) تنظیم می‌کند.
-    - name: ۲. راه‌اندازی محیط ویژوال استودیو
+    - name: ۲. راه‌اندازی محیط ویژوال استودیو (شامل MSBuild)
       uses: microsoft/setup-msbuild@v2
 
-    # این مرحله برای اطمینان از نصب vcpkg یا بسته‌های خاص است، اما به نظر نمی‌رسد پروژه به آن نیاز داشته باشد.
-    # با این حال، اگر وابستگی خاصی داشتید، می‌توانید آن را اضافه کنید.
-
     - name: ۳. بیلد کردن پروژه با MSBuild
-      working-directory: ${{env.SOLUTION_FILE_PATH}}
-      # دستور بیلد با پیکربندی Release
-      run: msbuild /m /p:Configuration=${{env.BUILD_CONFIGURATION}} DllProxyGenerator.sln
+      working-directory: dll-proxy-generator-src
+      run: msbuild /m /p:Configuration=Release DllProxyGenerator.sln
 
-    # فایل‌های خروجی (فایل exe و dllهای وابسته) را در یک آرتیفکت ذخیره می‌کند تا بتوانید دانلودشان کنید.
-    - name: ۴. ذخیره‌ی خروجی بیلد (آپلود آرتیفکت)
+    - name: ۴. نمایش فایل‌های ساخته شده (برای عیب‌یابی)
+      run: |
+        echo "محتوای پوشه‌ی خروجی:"
+        dir dll-proxy-generator-src\DllProxyGenerator\bin\Release\
+
+    - name: ۵. ذخیره‌ی فایل اجرایی به عنوان آرتیفکت
       uses: actions/upload-artifact@v4
       with:
-        name: DllProxyGenerator-Build
-        path: |
-          DllProxyGenerator\bin\${{env.BUILD_CONFIGURATION}}\
-          !**/*.pdb # (اختیاری) فایل‌های pdb را حذف کنید تا حجم کم شود
+        name: DllProxyGenerator-Executable
+        path: dll-proxy-generator-src\DllProxyGenerator\bin\Release\DllProxyGenerator.exe
