@@ -22,22 +22,28 @@ jobs:
     - name: Setup MSBuild
       uses: microsoft/setup-msbuild@v2
 
-    - name: Build kernel driver
-      shell: cmd
+    - name: List project files (debug)
+      shell: pwsh
       run: |
-        msbuild NullkD.vcxproj ^
-          /p:Configuration=${{ matrix.configuration }} ^
-          /p:Platform=${{ matrix.platform }} ^
+        Write-Host "Files in workspace root:"
+        Get-ChildItem -Name *.vcxproj, *.sln
+
+    - name: Build kernel driver (NullkD.sys)
+      shell: pwsh
+      run: |
+        msbuild NullkD.vcxproj `
+          /p:Configuration=${{ matrix.configuration }} `
+          /p:Platform=${{ matrix.platform }} `
           /p:SignMode=Off
 
-    - name: Build test client
-      shell: cmd
+    - name: Build test client (TestClient.exe)
+      shell: pwsh
       run: |
-        msbuild TestClient.sln ^
-          /p:Configuration=${{ matrix.configuration }} ^
+        msbuild TestClient.sln `
+          /p:Configuration=${{ matrix.configuration }} `
           /p:Platform=${{ matrix.platform }}
 
-    - name: Upload driver
+    - name: Upload driver artifact
       uses: actions/upload-artifact@v4
       with:
         name: NullkD-${{ matrix.configuration }}-${{ matrix.platform }}
@@ -45,7 +51,7 @@ jobs:
           **/NullkD.sys
         if-no-files-found: error
 
-    - name: Upload test client
+    - name: Upload test client artifact
       uses: actions/upload-artifact@v4
       with:
         name: TestClient-${{ matrix.configuration }}-${{ matrix.platform }}
