@@ -88,7 +88,6 @@ bool SendRequest(REQUEST_DATA& req)
 
     __try {
         NTSTATUS status = NtQueryCompSurf((HANDLE)&req, NULL, NULL);
-        // The hook ignores original parameters, returns STATUS_SUCCESS
         if (status != 0) {
             printf("[-] Call returned 0x%08X\n", status);
             return false;
@@ -107,7 +106,6 @@ bool TestPing()
     req.command = CMD_PING;
     if (!SendRequest(req)) return false;
     printf("[*] PING response: 0x%016llX\n", req.result);
-    // Expected: 0x50544548 if PTE hook active, else 0x4B524E4C
     if (req.result == 0x50544548)
         printf("[+] PTE hook active (0x50544548)\n");
     else if (req.result == 0x4B524E4C)
@@ -120,13 +118,11 @@ bool TestPing()
 bool TestMemoryReadWrite()
 {
     DWORD targetPid = GetCurrentProcessId();
-    // Read some bytes from our own module (kernel32)
     HMODULE hKernel32 = GetModuleHandleA("kernel32.dll");
     if (!hKernel32) return false;
     BYTE localBuf[16] = {};
     BYTE readBuf[16] = {};
 
-    // Read first 16 bytes of kernel32
     REQUEST_DATA req = {};
     req.command = CMD_READ;
     req.pid = targetPid;
@@ -138,7 +134,6 @@ bool TestMemoryReadWrite()
         return false;
     }
 
-    // Compare with local copy (should be same PE header)
     memcpy(localBuf, hKernel32, sizeof(localBuf));
     if (memcmp(localBuf, readBuf, sizeof(localBuf)) != 0) {
         printf("[-] Read data mismatch\n");
@@ -146,7 +141,6 @@ bool TestMemoryReadWrite()
     }
     printf("[+] Read 16 bytes from kernel32: correct\n");
 
-    // Write test: allocate a page in our process, then write via driver
     PVOID testMem = VirtualAlloc(NULL, 0x1000, MEM_COMMIT, PAGE_READWRITE);
     if (!testMem) return false;
     const char testStr[] = "NullkD test";
@@ -183,7 +177,7 @@ bool TestModuleBase()
     }
     HMODULE realBase = GetModuleHandleA("kernel32.dll");
     if ((ULONG64)realBase != base) {
-        printf("[-] Module base mismatch: got 0x%llX, expected 0x%llX\n", base, (ULONG64)realBase);
+        printf("[-] Module base mismatch\n");
         return false;
     }
     printf("[+] Module base correct: 0x%llX\n", base);
@@ -194,7 +188,6 @@ bool TestAllocFreeProtect()
 {
     DWORD pid = GetCurrentProcessId();
     REQUEST_DATA req = {};
-    // Allocate 4KB
     req.command = CMD_ALLOC;
     req.pid = pid;
     req.size = 0x1000;
@@ -207,7 +200,6 @@ bool TestAllocFreeProtect()
     }
     printf("[+] Allocated at 0x%llX\n", allocAddr);
 
-    // Verify we can write to it via normal API
     __try {
         *(int*)allocAddr = 0x12345678;
     } __except(EXCEPTION_EXECUTE_HANDLER) {
@@ -216,14 +208,12 @@ bool TestAllocFreeProtect()
     }
     printf("[+] Write to allocated memory successful\n");
 
-    // Protect to PAGE_READONLY
     req.command = CMD_PROTECT;
     req.address = allocAddr;
     req.size = 0x1000;
     req.protect = PAGE_READONLY;
     if (!SendRequest(req)) return false;
 
-    // Check protection by trying to write (should crash if protected, but we catch)
     bool writeCausedException = false;
     __try {
         *(int*)allocAddr = 0xDEAD;
@@ -231,22 +221,17 @@ bool TestAllocFreeProtect()
         writeCausedException = true;
     }
     if (!writeCausedException) {
-        printf("[-] Protection didn't change (write succeeded)\n");
+        printf("[-] Protection didn't change\n");
         return false;
     }
     printf("[+] Protection set to READONLY confirmed\n");
 
-    // Free
-    req.command = CMD_FREE;
-    req.result = allocAddr;  // Actually address is in req.address? Wait: CMD_FREE uses req.result? Looking at driver: case CMD_FREE: FreeVirtualMemory((HANDLE)req->pid, (PVOID)req->result); It uses req->result to pass address. That's confusing but consistent. We'll set result to address.
-    // Reset req
     req = {};
     req.command = CMD_FREE;
     req.pid = pid;
-    req.result = allocAddr;  // Driver expects the address in result field for FREE
+    req.result = allocAddr;
     if (!SendRequest(req)) return false;
 
-    // Verify freed: reading should fail
     __try {
         volatile int x = *(int*)allocAddr; (void)x;
         printf("[-] Memory still accessible after free\n");
@@ -282,7 +267,6 @@ bool TestBatchRead()
     req.command = CMD_READ_BATCH;
     req.pid = pid;
     req.buffer = (ULONG64)&batch;
-    req.size = sizeof(batch); // Driver uses size field? Looking at driver: PhysicalBatchReadProcessMemory(..., (SIZE_T)req->size) passes req->size as outBufSize. In the batch request, outBufSize should be the total output buffer size. So we set req.size = sizeof(outBuffer).
     req.size = sizeof(outBuffer);
     if (!SendRequest(req) || req.result != 1) {
         printf("[-] Batch read failed\n");
@@ -340,7 +324,6 @@ int main()
         return 1;
     }
 
-    // Attempt ping to confirm driver is loaded
     if (!TestPing()) {
         printf("FATAL: Driver not responding. Is NullkD.sys loaded?\n");
         return 1;
