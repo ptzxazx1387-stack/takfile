@@ -1,18 +1,17 @@
 /*
- * test_driver.cpp - Full verification of NullKD kernel driver
- *
- * Tests all communication commands: PING, MODULE_BASE, READ, WRITE,
- * ALLOC, FREE, PROTECT, VERIFY_PTE, VERIFY_SPOOF.
- *
- * Compile (x64 Release):
- *   cl /EHsc /std:c++17 test_driver.cpp /Fe:test_driver.exe
+ * test_driver.cpp - Robust verification of NullKD kernel driver
  */
 
 #include <windows.h>
 #include <iostream>
 #include <iomanip>
 #include <cstring>
-#include <Psapi.h>   // for GetModuleInformation
+#include <Psapi.h>
+#include <vector>
+#include <chrono>
+#include <thread>
+
+#pragma comment(lib, "psapi.lib")
 
 #define REQUEST_MAGIC 0x44524B4E
 
@@ -44,17 +43,29 @@ typedef struct _REQUEST_DATA {
     wchar_t         module_name[64];
 } REQUEST_DATA, *PREQUEST_DATA;
 
-// Hooked dxgkrnl function
-typedef NTSTATUS (NTAPI *NtQCSS_t)(void*,void*,void*);
-
+typedef NTSTATUS (NTAPI *NtQCSS_t)(void*, void*, void*);
 static NtQCSS_t g_NtQuery = nullptr;
 
+// Force flush after every line
+#define LOG(msg) do { std::cout << msg << std::endl; } while(0)
+
 bool init_driver() {
-    if (g_NtQuery) return true;
-    HMODULE hWin32u = LoadLibraryA("win32u.dll");
-    if (!hWin32u) return false;
+    LOG("[*] Resolving win32u!NtQueryCompositionSurfaceStatistics...");
+    HMODULE hWin32u = GetModuleHandleA("win32u.dll");
+    if (!hWin32u) {
+        hWin32u = LoadLibraryA("win32u.dll");
+    }
+    if (!hWin32u) {
+        LOG("[FATAL] win32u.dll not found.");
+        return false;
+    }
     g_NtQuery = (NtQCSS_t)GetProcAddress(hWin32u, "NtQueryCompositionSurfaceStatistics");
-    return g_NtQuery != nullptr;
+    if (!g_NtQuery) {
+        LOG("[FATAL] Export not found.");
+        return false;
+    }
+    LOG("[*] Function resolved at 0x" << std::hex << (uintptr_t)g_NtQuery << std::dec);
+    return true;
 }
 
 bool call_driver(REQUEST_DATA& req) {
@@ -65,222 +76,230 @@ bool call_driver(REQUEST_DATA& req) {
         return (st == 0 || st == 1);
     }
     __except (EXCEPTION_EXECUTE_HANDLER) {
+        LOG("[!] Exception during driver call (caught).");
         return false;
     }
 }
 
-// Helper: verify a pointer is readable in our process
-bool is_readable(const void* ptr) {
-    MEMORY_BASIC_INFORMATION mbi;
-    if (VirtualQuery(ptr, &mbi, sizeof(mbi)) == 0) return false;
-    if (mbi.State != MEM_COMMIT) return false;
-    if (mbi.Protect & (PAGE_NOACCESS | PAGE_GUARD)) return false;
-    return true;
-}
-
 int main() {
-    std::cout << "=== NullKD Driver Test ===\n\n";
+    LOG("=== NullKD Driver Test ===");
 
-    if (!init_driver()) {
-        std::cout << "[FATAL] Could not resolve NtQueryCompositionSurfaceStatistics.\n";
-        std::cout << "        Make sure the driver is loaded.\n";
+    // 1. Initialize
+    __try {
+        if (!init_driver()) {
+            LOG("[FATAL] Initialization failed. Is the driver loaded?");
+            std::cin.get();
+            return 1;
+        }
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER) {
+        LOG("[FATAL] Exception during init_driver.");
         std::cin.get();
         return 1;
     }
 
-    REQUEST_DATA req;
-    ZeroMemory(&req, sizeof(req));
-
-    // ---- 1. PING ----
-    req.command = CMD_PING;
-    if (!call_driver(req) || req.result == 0) {
-        std::cout << "[FAIL] PING – driver not responding.\n";
-        std::cin.get();
-        return 1;
+    // 2. Quick safety check: call with zeroed request to see if the function is reachable
+    {
+        REQUEST_DATA zero = {};
+        LOG("[*] Testing raw call to driver (expecting no crash)...");
+        __try {
+            g_NtQuery(&zero, nullptr, nullptr);
+            LOG("[*] Raw call returned safely (driver may not be hooked yet).");
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER) {
+            LOG("[FATAL] Raw call caused exception. Driver hook may be unstable.");
+            std::cin.get();
+            return 1;
+        }
     }
-    std::cout << "[PASS] PING (0x" << std::hex << req.result << std::dec << ")\n";
 
-    // ---- 2. MODULE_BASE (self) ----
-    HMODULE hNtdll = GetModuleHandleA("ntdll.dll");
-    if (!hNtdll) {
-        std::cout << "[FAIL] Cannot get ntdll.dll handle for verification.\n";
-    } else {
-        MODULEINFO mi;
-        if (!GetModuleInformation(GetCurrentProcess(), hNtdll, &mi, sizeof(mi))) {
-            std::cout << "[FAIL] GetModuleInformation failed.\n";
+    // 3. PING
+    {
+        REQUEST_DATA req = {};
+        req.command = CMD_PING;
+        LOG("[*] Sending PING...");
+        if (!call_driver(req) || req.result == 0) {
+            LOG("[FAIL] PING – driver not responding. (result=0x" << std::hex << req.result << std::dec << ")");
+            LOG("[HINT] Make sure NullKD.sys is loaded with kdmapper.");
+            std::cin.get();
+            return 1;
+        }
+        LOG("[PASS] PING (0x" << std::hex << req.result << std::dec << ")");
+    }
+
+    // 4. MODULE_BASE
+    {
+        HMODULE hNtdll = GetModuleHandleA("ntdll.dll");
+        if (!hNtdll) {
+            LOG("[SKIP] MODULE_BASE (ntdll not found)");
         } else {
-            uintptr_t expectedBase = reinterpret_cast<uintptr_t>(mi.lpBaseOfDll);
-            req = {0};
-            req.command = CMD_MODULE_BASE;
-            req.pid = GetCurrentProcessId();
-            wcsncpy_s(req.module_name, L"ntdll.dll", 63);
-            if (!call_driver(req)) {
-                std::cout << "[FAIL] MODULE_BASE – driver call failed.\n";
-            } else if (req.result != expectedBase) {
-                std::cout << "[FAIL] MODULE_BASE – expected 0x" << std::hex << expectedBase
-                          << " got 0x" << req.result << std::dec << "\n";
+            MODULEINFO mi;
+            if (GetModuleInformation(GetCurrentProcess(), hNtdll, &mi, sizeof(mi))) {
+                uintptr_t expected = (uintptr_t)mi.lpBaseOfDll;
+                REQUEST_DATA req = {};
+                req.command = CMD_MODULE_BASE;
+                req.pid = GetCurrentProcessId();
+                wcsncpy_s(req.module_name, L"ntdll.dll", 63);
+                LOG("[*] Sending MODULE_BASE for ntdll.dll...");
+                if (!call_driver(req) || req.result != expected) {
+                    LOG("[FAIL] MODULE_BASE expected 0x" << std::hex << expected << " got 0x" << req.result << std::dec);
+                } else {
+                    LOG("[PASS] MODULE_BASE");
+                }
             } else {
-                std::cout << "[PASS] MODULE_BASE (ntdll.dll = 0x" << std::hex << req.result << std::dec << ")\n";
+                LOG("[SKIP] MODULE_BASE (GetModuleInformation failed)");
             }
         }
     }
 
-    // ---- 3. READ (own memory) ----
+    // 5. READ
     {
         int original = 0x12345678;
         int readback = 0;
-        req = {0};
+        REQUEST_DATA req = {};
         req.command = CMD_READ;
         req.pid = GetCurrentProcessId();
-        req.address = reinterpret_cast<uintptr_t>(&original);
-        req.buffer = reinterpret_cast<uintptr_t>(&readback);
+        req.address = (uintptr_t)&original;
+        req.buffer = (uintptr_t)&readback;
         req.size = sizeof(original);
+        LOG("[*] Sending READ...");
         if (!call_driver(req) || readback != original) {
-            std::cout << "[FAIL] READ (expected 0x12345678, got 0x" << std::hex << readback << std::dec << ")\n";
+            LOG("[FAIL] READ (got 0x" << std::hex << readback << std::dec << ")");
         } else {
-            std::cout << "[PASS] READ\n";
+            LOG("[PASS] READ");
         }
     }
 
-    // ---- 4. WRITE (own memory) ----
+    // 6. WRITE
     {
         int target = 0;
         int value = 0xDEADBEEF;
-        req = {0};
+        REQUEST_DATA req = {};
         req.command = CMD_WRITE;
         req.pid = GetCurrentProcessId();
-        req.address = reinterpret_cast<uintptr_t>(&target);
-        req.buffer = reinterpret_cast<uintptr_t>(&value);
+        req.address = (uintptr_t)&target;
+        req.buffer = (uintptr_t)&value;
         req.size = sizeof(value);
+        LOG("[*] Sending WRITE...");
         if (!call_driver(req) || target != value) {
-            std::cout << "[FAIL] WRITE (target = 0x" << std::hex << target << std::dec << ")\n";
+            LOG("[FAIL] WRITE");
         } else {
-            std::cout << "[PASS] WRITE\n";
+            LOG("[PASS] WRITE");
         }
     }
 
-    // ---- 5. ALLOC ----
+    // 7. ALLOC + FREE
     {
-        req = {0};
+        REQUEST_DATA req = {};
         req.command = CMD_ALLOC;
         req.pid = GetCurrentProcessId();
         req.size = 0x1000;
         req.protect = PAGE_READWRITE;
+        LOG("[*] Sending ALLOC...");
         if (!call_driver(req) || req.result == 0) {
-            std::cout << "[FAIL] ALLOC\n";
+            LOG("[FAIL] ALLOC");
         } else {
             uintptr_t addr = req.result;
-            std::cout << "[PASS] ALLOC (0x" << std::hex << addr << std::dec << ")\n";
-
-            // Write to allocated memory to confirm it's usable
-            int testVal = 0xDEAD;
-            req = {0};
+            LOG("[PASS] ALLOC (0x" << std::hex << addr << std::dec << ")");
+            // Test usability
+            int testVal = 0x1234;
+            req = {};
             req.command = CMD_WRITE;
             req.pid = GetCurrentProcessId();
             req.address = addr;
-            req.buffer = reinterpret_cast<uintptr_t>(&testVal);
+            req.buffer = (uintptr_t)&testVal;
             req.size = sizeof(testVal);
             if (call_driver(req)) {
-                // Read back
                 int readVal = 0;
-                req = {0};
+                req = {};
                 req.command = CMD_READ;
                 req.pid = GetCurrentProcessId();
                 req.address = addr;
-                req.buffer = reinterpret_cast<uintptr_t>(&readVal);
+                req.buffer = (uintptr_t)&readVal;
                 req.size = sizeof(readVal);
                 if (call_driver(req) && readVal == testVal) {
-                    std::cout << "[PASS] ALLOC memory usable\n";
+                    LOG("[PASS] Allocated memory usable");
                 } else {
-                    std::cout << "[FAIL] ALLOC memory not usable\n";
+                    LOG("[FAIL] Allocated memory not usable");
                 }
             }
-
             // Free
-            req = {0};
+            req = {};
             req.command = CMD_FREE;
             req.pid = GetCurrentProcessId();
             req.result = addr;
-            if (!call_driver(req)) {
-                std::cout << "[WARN] FREE of allocated memory failed (non-fatal)\n";
+            if (call_driver(req)) {
+                LOG("[PASS] FREE");
             } else {
-                std::cout << "[PASS] FREE\n";
+                LOG("[WARN] FREE failed");
             }
         }
     }
 
-    // ---- 6. PROTECT ----
+    // 8. PROTECT
     {
-        // Allocate a small region and change protection
-        req = {0};
+        REQUEST_DATA req = {};
         req.command = CMD_ALLOC;
         req.pid = GetCurrentProcessId();
         req.size = 0x1000;
         req.protect = PAGE_READWRITE;
         if (call_driver(req) && req.result != 0) {
             uintptr_t addr = req.result;
-            // Change to PAGE_READONLY and test
-            req = {0};
+            req = {};
             req.command = CMD_PROTECT;
             req.pid = GetCurrentProcessId();
             req.address = addr;
             req.size = 0x1000;
             req.protect = PAGE_READONLY;
-            if (!call_driver(req)) {
-                std::cout << "[FAIL] PROTECT\n";
+            LOG("[*] Sending PROTECT...");
+            if (call_driver(req)) {
+                LOG("[PASS] PROTECT");
             } else {
-                std::cout << "[PASS] PROTECT\n";
+                LOG("[FAIL] PROTECT");
             }
-            // Free
-            req = {0};
+            // Cleanup
+            req = {};
             req.command = CMD_FREE;
             req.pid = GetCurrentProcessId();
             req.result = addr;
             call_driver(req);
         } else {
-            std::cout << "[SKIP] PROTECT (ALLOC failed)\n";
+            LOG("[SKIP] PROTECT (ALLOC failed)");
         }
     }
 
-    // ---- 7. VERIFY_PTE ----
+    // 9. VERIFY_PTE
     {
-        unsigned char buf[64] = {0};
-        req = {0};
+        unsigned char buf[64] = {};
+        REQUEST_DATA req = {};
         req.command = CMD_VERIFY_PTE;
-        req.buffer = reinterpret_cast<uintptr_t>(buf);
+        req.buffer = (uintptr_t)buf;
+        LOG("[*] Sending VERIFY_PTE...");
         if (!call_driver(req)) {
-            std::cout << "[FAIL] VERIFY_PTE – driver call failed\n";
+            LOG("[FAIL] VERIFY_PTE call failed");
         } else {
-            bool active = (reinterpret_cast<ULONG64*>(buf)[0] != 0);
-            std::cout << "[INFO] VERIFY_PTE: " << (active ? "PTE hook active" : "fallback (direct patch)") << "\n";
-            std::cout << "       originalPfn: 0x" << std::hex << reinterpret_cast<ULONG64*>(buf)[1] << std::dec << "\n";
-            std::cout << "       newPfn:      0x" << std::hex << reinterpret_cast<ULONG64*>(buf)[2] << std::dec << "\n";
-            std::cout << "       targetVA:    0x" << std::hex << reinterpret_cast<ULONG64*>(buf)[3] << std::dec << "\n";
-            std::cout << "[PASS] VERIFY_PTE\n";
+            bool active = (*(uint64_t*)(buf + 0) != 0);
+            LOG("[PASS] VERIFY_PTE: " << (active ? "PTE hook active" : "fallback (direct patch)"));
         }
     }
 
-    // ---- 8. VERIFY_SPOOF ----
+    // 10. VERIFY_SPOOF
     {
-        unsigned char buf[16] = {0};
-        req = {0};
+        unsigned char buf[16] = {};
+        REQUEST_DATA req = {};
         req.command = CMD_VERIFY_SPOOF;
-        req.buffer = reinterpret_cast<uintptr_t>(buf);
+        req.buffer = (uintptr_t)buf;
+        LOG("[*] Sending VERIFY_SPOOF...");
         if (!call_driver(req)) {
-            std::cout << "[FAIL] VERIFY_SPOOF\n";
+            LOG("[FAIL] VERIFY_SPOOF");
         } else {
             bool active = (req.result != 0);
-            std::cout << "[INFO] VERIFY_SPOOF: " << (active ? "spoof active" : "spoof inactive") << "\n";
-            if (active) {
-                std::cout << "       gadget: 0x" << std::hex << reinterpret_cast<ULONG64*>(buf)[0] << std::dec << "\n";
-                std::cout << "       stub:   0x" << std::hex << reinterpret_cast<ULONG64*>(buf)[1] << std::dec << "\n";
-            }
-            std::cout << "[PASS] VERIFY_SPOOF\n";
+            LOG("[PASS] VERIFY_SPOOF: " << (active ? "spoof active" : "spoof inactive"));
         }
     }
 
-    std::cout << "\n=== All tests completed ===\n";
-    std::cout << "Press Enter to exit...";
+    LOG("\n=== All tests completed ===");
+    LOG("Press Enter to exit...");
     std::cin.get();
     return 0;
 }
