@@ -21,7 +21,6 @@ jobs:
     - name: Compile test_driver.exe
       shell: cmd
       run: |
-        :: Locate Visual Studio installation
         for /f "usebackq tokens=*" %%i in (`"%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationPath`) do set VSINSTALL=%%i
         call "%VSINSTALL%\VC\Auxiliary\Build\vcvarsall.bat" x64
         cl /EHsc /std:c++17 test_driver.cpp /Fe:test_driver.exe /link psapi.lib
