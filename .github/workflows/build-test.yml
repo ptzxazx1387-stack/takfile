@@ -1,4 +1,4 @@
-name: Build Usermode Test
+name: Build Driver and Test Client
 
 on:
   push:
@@ -9,7 +9,12 @@ on:
 
 jobs:
   build:
-    runs-on: windows-latest
+    runs-on: windows-2022
+    strategy:
+      matrix:
+        configuration: [Release]
+        platform: [x64]
+
     steps:
     - name: Checkout repository
       uses: actions/checkout@v4
@@ -17,15 +22,33 @@ jobs:
     - name: Setup MSBuild
       uses: microsoft/setup-msbuild@v2
 
-    - name: Compile test_driver.exe
+    - name: Build kernel driver
       shell: cmd
       run: |
-        for /f "usebackq tokens=*" %%i in (`"%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationPath`) do set VSINSTALL=%%i
-        call "%VSINSTALL%\VC\Auxiliary\Build\vcvarsall.bat" x64
-        cl /EHsc /std:c++17 test_driver.cpp /Fe:test_driver.exe /link psapi.lib
+        msbuild NullkD.vcxproj ^
+          /p:Configuration=${{ matrix.configuration }} ^
+          /p:Platform=${{ matrix.platform }} ^
+          /p:SignMode=Off
 
-    - name: Upload test executable
+    - name: Build test client
+      shell: cmd
+      run: |
+        msbuild TestClient.sln ^
+          /p:Configuration=${{ matrix.configuration }} ^
+          /p:Platform=${{ matrix.platform }}
+
+    - name: Upload driver
       uses: actions/upload-artifact@v4
       with:
-        name: test_driver
-        path: test_driver.exe
+        name: NullkD-${{ matrix.configuration }}-${{ matrix.platform }}
+        path: |
+          **/NullkD.sys
+        if-no-files-found: error
+
+    - name: Upload test client
+      uses: actions/upload-artifact@v4
+      with:
+        name: TestClient-${{ matrix.configuration }}-${{ matrix.platform }}
+        path: |
+          **/TestClient.exe
+        if-no-files-found: error
