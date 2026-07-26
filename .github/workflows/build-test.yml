@@ -1,6 +1,10 @@
-name: Build DLL Proxy Generator from Original Repo
+name: Build Usermode Test
 
 on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
   workflow_dispatch:
 
 jobs:
@@ -8,66 +12,19 @@ jobs:
     runs-on: windows-latest
 
     steps:
-    - name: ۱. دریافت کد پروژه از ریپازیتوری اصلی
+    - name: Checkout repository
       uses: actions/checkout@v4
-      with:
-        repository: maluramichael/dll-proxy-generator
-        ref: master
-        path: dll-proxy-generator-src
-        fetch-depth: 1
 
-    - name: ۲. راه‌اندازی محیط ویژوال استودیو
+    - name: Setup MSBuild
       uses: microsoft/setup-msbuild@v2
 
-    - name: ۳. بیلد کردن پروژه با MSBuild (همه پلتفرم‌ها)
-      working-directory: dll-proxy-generator-src
+    - name: Compile test driver (test_driver.exe)
+      shell: cmd
       run: |
-        Write-Host "=== شروع بیلد برای Win32 ==="
-        msbuild /m /p:Configuration=Release /p:Platform=Win32 DllProxyGenerator.sln
-        
-        Write-Host "=== شروع بیلد برای x64 ==="
-        msbuild /m /p:Configuration=Release /p:Platform=x64 DllProxyGenerator.sln
+        cl /EHsc /std:c++17 test_driver.cpp /Fe:test_driver.exe
 
-    - name: ۴. جستجوی کامل فایل‌های خروجی
-      id: find-files
-      run: |
-        Write-Host "=== جستجوی تمام فایل‌های exe در کل پوشه ==="
-        $allExeFiles = Get-ChildItem -Recurse -Filter "*.exe" -Path dll-proxy-generator-src
-        $allExeFiles | ForEach-Object { Write-Host "یافت شد: $($_.FullName)" }
-        
-        Write-Host "=== جستجوی فایل‌های مرتبط با DllProxyGenerator ==="
-        $targetFiles = Get-ChildItem -Recurse -Filter "DllProxyGenerator.exe" -Path dll-proxy-generator-src
-        if ($targetFiles) {
-          $targetFiles | ForEach-Object { 
-            Write-Host "فایل هدف یافت شد: $($_.FullName)"
-            echo "found=true" >> $env:GITHUB_OUTPUT
-            echo "file_path=$($_.FullName)" >> $env:GITHUB_OUTPUT
-          }
-        } else {
-          Write-Host "هشدار: فایل DllProxyGenerator.exe پیدا نشد!"
-          Write-Host "=== نمایش محتویات پوشه‌های bin ==="
-          Get-ChildItem -Recurse -Path dll-proxy-generator-src -Directory | Where-Object { $_.Name -eq "bin" } | ForEach-Object {
-            Write-Host "پوشه: $($_.FullName)"
-            Get-ChildItem -Path $_.FullName -Recurse | ForEach-Object { Write-Host "  $($_.FullName)" }
-          }
-          echo "found=false" >> $env:GITHUB_OUTPUT
-        }
-
-    - name: ۵. آپلود فایل‌های یافت شده
-      if: steps.find-files.outputs.found == 'true'
+    - name: Upload test executable
       uses: actions/upload-artifact@v4
       with:
-        name: DllProxyGenerator-Executable
-        path: |
-          dll-proxy-generator-src\**\DllProxyGenerator.exe
-          dll-proxy-generator-src\**\Release\*
-          dll-proxy-generator-src\**\Debug\*
-        if-no-files-found: error
-
-    - name: ۶. آپلود کل پوشه (در صورت پیدا نشدن فایل)
-      if: steps.find-files.outputs.found != 'true'
-      uses: actions/upload-artifact@v4
-      with:
-        name: Full-Build-Output-For-Debug
-        path: dll-proxy-generator-src\**\bin\*
-        if-no-files-found: warn
+        name: test_driver
+        path: test_driver.exe
