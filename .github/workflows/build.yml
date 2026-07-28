@@ -1,58 +1,60 @@
-name: Build Zydis DLL (x64-windows)
+name: Build il2cpp-dumper-rs
 
-# دستی از تب Actions اجرا میشه، و روی هر push به شاخه main هم اجرا میشه
+# لینک پروژه‌ای که بیلد می‌شود:
+# https://github.com/rodroidmods/il2cpp-dumper-rs
+env:
+  SOURCE_REPO: rodroidmods/il2cpp-dumper-rs
+  SOURCE_REF: master
+
 on:
-  workflow_dispatch:
+  workflow_dispatch:        # اجرای دستی از تب Actions
   push:
-    branches: [ main ]
+    branches: [ main, master ]
 
 jobs:
-  build-zydis:
-    runs-on: windows-latest
+  build:
+    name: build (${{ matrix.target }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            bin: il2cpp_dumper
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            bin: il2cpp_dumper.exe
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            bin: il2cpp_dumper
+          - os: macos-13
+            target: x86_64-apple-darwin
+            bin: il2cpp_dumper
 
     steps:
-      # 1) کلون کردن مخزن vcpkg
-      - name: Clone vcpkg
-        run: git clone https://github.com/microsoft/vcpkg.git
-
-      # کش کردن باینری‌های vcpkg تا دفعات بعد سریع‌تر بیلد بشه
-      - name: Cache vcpkg
-        uses: actions/cache@v4
+      - name: Checkout source project
+        uses: actions/checkout@v4
         with:
-          path: |
-            vcpkg/installed
-            vcpkg/buildtrees
-            vcpkg/packages
-            vcpkg/downloads
-          key: vcpkg-zydis-x64-windows-${{ runner.os }}
+          repository: ${{ env.SOURCE_REPO }}
+          ref: ${{ env.SOURCE_REF }}
 
-      # 2 و 3) اجرای اسکریپت bootstrap برای آماده‌سازی vcpkg
-      - name: Bootstrap vcpkg
-        working-directory: vcpkg
-        run: .\bootstrap-vcpkg.bat
+      - name: Install Rust toolchain (edition 2024 → stable ≥ 1.85)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
 
-      # 4) نصب/بیلد کردن Zydis به صورت DLL برای x64 ویندوز
-      - name: Install Zydis (x64-windows DLL)
-        working-directory: vcpkg
-        run: .\vcpkg.exe install zydis:x64-windows
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
 
-      # جمع‌آوری خروجی‌ها (DLL، LIB و فایل‌های هدر) در یک پوشه
-      - name: Collect artifacts
-        shell: pwsh
-        run: |
-          New-Item -ItemType Directory -Force -Path output/bin, output/lib, output/include | Out-Null
-          $base = "vcpkg/installed/x64-windows"
-          Copy-Item "$base/bin/*.dll"      output/bin  -Force -ErrorAction SilentlyContinue
-          Copy-Item "$base/bin/*.pdb"      output/bin  -Force -ErrorAction SilentlyContinue
-          Copy-Item "$base/lib/*.lib"      output/lib  -Force -ErrorAction SilentlyContinue
-          Copy-Item "$base/include/*"      output/include -Recurse -Force -ErrorAction SilentlyContinue
-          Write-Host "----- محتوای bin -----"
-          Get-ChildItem output/bin
+      - name: Build (release)
+        run: cargo build --release --locked --target ${{ matrix.target }}
 
-      # تحویل خروجی به صورت artifact قابل دانلود
-      - name: Upload Zydis DLL
+      - name: Upload binary
         uses: actions/upload-artifact@v4
         with:
-          name: zydis-x64-windows
-          path: output
+          name: il2cpp_dumper-${{ matrix.target }}
+          path: target/${{ matrix.target }}/release/${{ matrix.bin }}
           if-no-files-found: error
