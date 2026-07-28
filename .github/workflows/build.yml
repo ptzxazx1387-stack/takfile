@@ -1,38 +1,58 @@
-name: Build Test Client
+name: Build Zydis DLL (x64-windows)
 
+# دستی از تب Actions اجرا میشه، و روی هر push به شاخه main هم اجرا میشه
 on:
-  push:
-    branches: [ "main" ]
-  pull_request:
-    branches: [ "main" ]
   workflow_dispatch:
+  push:
+    branches: [ main ]
 
 jobs:
-  build-client:
-    runs-on: windows-2022
-    strategy:
-      matrix:
-        configuration: [Release]
-        platform: [x64]
+  build-zydis:
+    runs-on: windows-latest
 
     steps:
-    - name: Checkout repository
-      uses: actions/checkout@v4
+      # 1) کلون کردن مخزن vcpkg
+      - name: Clone vcpkg
+        run: git clone https://github.com/microsoft/vcpkg.git
 
-    - name: Setup MSBuild
-      uses: microsoft/setup-msbuild@v2
+      # کش کردن باینری‌های vcpkg تا دفعات بعد سریع‌تر بیلد بشه
+      - name: Cache vcpkg
+        uses: actions/cache@v4
+        with:
+          path: |
+            vcpkg/installed
+            vcpkg/buildtrees
+            vcpkg/packages
+            vcpkg/downloads
+          key: vcpkg-zydis-x64-windows-${{ runner.os }}
 
-    - name: Build test client
-      shell: pwsh
-      run: |
-        msbuild TestClient.vcxproj `
-          /p:Configuration=${{ matrix.configuration }} `
-          /p:Platform=${{ matrix.platform }}
+      # 2 و 3) اجرای اسکریپت bootstrap برای آماده‌سازی vcpkg
+      - name: Bootstrap vcpkg
+        working-directory: vcpkg
+        run: .\bootstrap-vcpkg.bat
 
-    - name: Upload test client artifact
-      uses: actions/upload-artifact@v4
-      with:
-        name: TestClient-${{ matrix.configuration }}-${{ matrix.platform }}
-        path: |
-          **/TestClient.exe
-        if-no-files-found: error
+      # 4) نصب/بیلد کردن Zydis به صورت DLL برای x64 ویندوز
+      - name: Install Zydis (x64-windows DLL)
+        working-directory: vcpkg
+        run: .\vcpkg.exe install zydis:x64-windows
+
+      # جمع‌آوری خروجی‌ها (DLL، LIB و فایل‌های هدر) در یک پوشه
+      - name: Collect artifacts
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path output/bin, output/lib, output/include | Out-Null
+          $base = "vcpkg/installed/x64-windows"
+          Copy-Item "$base/bin/*.dll"      output/bin  -Force -ErrorAction SilentlyContinue
+          Copy-Item "$base/bin/*.pdb"      output/bin  -Force -ErrorAction SilentlyContinue
+          Copy-Item "$base/lib/*.lib"      output/lib  -Force -ErrorAction SilentlyContinue
+          Copy-Item "$base/include/*"      output/include -Recurse -Force -ErrorAction SilentlyContinue
+          Write-Host "----- محتوای bin -----"
+          Get-ChildItem output/bin
+
+      # تحویل خروجی به صورت artifact قابل دانلود
+      - name: Upload Zydis DLL
+        uses: actions/upload-artifact@v4
+        with:
+          name: zydis-x64-windows
+          path: output
+          if-no-files-found: error
